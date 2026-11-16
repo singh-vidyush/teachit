@@ -1,0 +1,179 @@
+:root,
+html,
+body,
+#root {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+}
+
+body {
+  min-width: 320px;
+  min-height: 320px;
+  background: #f8f9fa;
+}
+
+.whiteboard {
+  position: relative;
+  width: 100%;
+  height: 100%;
+}
+
+.teachit-toolbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.teachit-library-import {
+  display: flex;
+  align-items: center;
+  height: 100%;
+  padding: 0 8px;
+}
+
+.teachit-library-import__button {
+  border: 1px solid #d7dce2;
+  border-radius: 8px;
+  padding: 7px 10px;
+  background: #fff;
+  color: #25282d;
+  font: 500 13px/1.2 system-ui, sans-serif;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.teachit-library-import__button:hover:not(:disabled) {
+  background: #f5f6f8;
+}
+
+.teachit-library-import__button:disabled {
+  cursor: wait;
+  opacity: 0.65;
+}
+
+.teachit-library-import__input {
+  display: none;
+}
+
+.teachit-action-button {
+  border: 1px solid #d7dce2;
+  border-radius: 8px;
+  padding: 7px 10px;
+  background: #fff;
+  color: #25282d;
+  font: 500 13px/1.2 system-ui, sans-serif;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.teachit-action-button:hover:not(:disabled) {
+  background: #f5f6f8;
+}
+
+.teachit-action-button:disabled {
+  cursor: wait;
+  opacity: 0.65;
+}
+
+.teachit-action-button--recording {
+  border-color: #c83535;
+  color: #b42323;
+}
+
+.teachit-camera-widget {
+  position: fixed;
+  z-index: 10000;
+  left: 24px;
+  bottom: 24px;
+  width: 240px;
+  height: 135px;
+  min-width: 180px;
+  min-height: 100px;
+  box-sizing: border-box;
+  overflow: hidden;
+  border: 1px solid rgb(255 255 255 / 20%);
+  border-radius: 12px;
+  background: #15171a;
+  box-shadow: 0 8px 24px rgb(0 0 0 / 24%);
+  user-select: none;
+  touch-action: none;
+  cursor: grab;
+}
+
+.teachit-camera-widget:active {
+  cursor: grabbing;
+}
+
+.teachit-camera-widget__video {
+  position: absolute;
+  inset: 0;
+  height: 100%;
+  width: 100%;
+  background: #08090a;
+  object-fit: cover;
+  transform: scaleX(-1);
+}
+
+.teachit-camera-widget__resize {
+  position: absolute;
+  z-index: 1;
+  right: 0;
+  bottom: 0;
+  width: 22px;
+  height: 22px;
+  border-bottom-right-radius: 11px;
+  background:
+    linear-gradient(135deg, transparent 0 57%, rgb(255 255 255 / 48%) 59% 63%, transparent 65%),
+    linear-gradient(135deg, transparent 0 72%, rgb(255 255 255 / 65%) 74% 78%, transparent 80%);
+  cursor: nwse-resize;
+  touch-action: none;
+}
+
+.teachit-recording-notice {
+  position: fixed;
+  z-index: 10001;
+  right: 20px;
+  bottom: 20px;
+  max-width: min(420px, calc(100vw - 40px));
+  border: 1px solid #d7dce2;
+  border-radius: 10px;
+  padding: 10px 12px;
+  background: #fff;
+  box-shadow: 0 6px 20px rgb(0 0 0 / 12%);
+  color: #25282d;
+  font: 13px/1.4 system-ui, sans-serif;
+}
+
+@media (max-width: 600px) {
+  .teachit-toolbar-actions {
+    gap: 2px;
+  }
+
+  .teachit-action-button,
+  .teachit-library-import__button {
+    padding: 6px 7px;
+    font-size: 11px;
+  }
+}
+
+.loading {
+  display: grid;
+  width: 100%;
+  height: 100%;
+  place-items: center;
+}
+
+.loading-mark {
+  width: 24px;
+  height: 24px;
+  border: 2px solid #e1e5e9;
+  border-top-color: #6965db;
+  border-radius: 50%;
+  animation: spin 700ms linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
