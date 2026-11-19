@@ -9,6 +9,7 @@ type PathElement = ElementBase & { type: "freehand"; points: Point[] };
 type ShapeElement = ElementBase & { type: ShapeKind; x: number; y: number; width: number; height: number };
 type TextElement = ElementBase & { type: "text"; x: number; y: number; text: string; fontSize: number };
 type CanvasElement = PathElement | ShapeElement | TextElement;
+type LibraryItem = { id: string; name: string; elements: CanvasElement[] };
 type Camera = { x: number; y: number; zoom: number };
 type TextDraft = { point: Point; screenX: number; screenY: number; editingId?: string };
 type ResizeHandle = "nw" | "n" | "ne" | "e" | "se" | "s" | "sw" | "w";
@@ -65,7 +66,7 @@ function openDatabase() {
   return databasePromise;
 }
 
-async function loadDocument(): Promise<{ elements: CanvasElement[]; camera: Camera } | undefined> {
+async function loadDocument(): Promise<{ elements: CanvasElement[]; camera: Camera; libraries?: LibraryItem[] } | undefined> {
   const db = await openDatabase();
   return new Promise((resolve, reject) => {
     const request = db.transaction(STORE, "readonly").objectStore(STORE).get(DOCUMENT_KEY);
@@ -74,7 +75,7 @@ async function loadDocument(): Promise<{ elements: CanvasElement[]; camera: Came
   });
 }
 
-async function saveDocument(value: { elements: CanvasElement[]; camera: Camera }) {
+async function saveDocument(value: { elements: CanvasElement[]; camera: Camera; libraries?: LibraryItem[] }) {
   const db = await openDatabase();
   return new Promise<void>((resolve, reject) => {
     const transaction = db.transaction(STORE, "readwrite");
@@ -413,6 +414,7 @@ export function TeachItCanvas({ actions }: { actions: React.ReactNode }) {
   const redoRef = useRef<CanvasElement[][]>([]);
   const gestureRef = useRef<Gesture | null>(null);
   const [elements, setElements] = useState<CanvasElement[]>([]);
+  const [libraries, setLibraries] = useState<LibraryItem[]>([]);
   const [tool, setTool] = useState<Tool>("select");
   const [stroke, setStroke] = useState(COLORS[0]);
   const [strokeWidth, setStrokeWidth] = useState(STROKE_WIDTHS[0]);
@@ -428,6 +430,8 @@ export function TeachItCanvas({ actions }: { actions: React.ReactNode }) {
   const [textValue, setTextValue] = useState("");
   const [spaceDown, setSpaceDown] = useState(false);
   const [saveNotice, setSaveNotice] = useState("");
+  const [libraryOpen, setLibraryOpen] = useState(false);
+  const libraryInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     let active = true;
@@ -436,6 +440,7 @@ export function TeachItCanvas({ actions }: { actions: React.ReactNode }) {
       const restored = document?.elements ?? [];
       elementsRef.current = restored;
       setElements(restored);
+      setLibraries(document?.libraries ?? []);
       if (document?.camera) setCamera(document.camera);
       setLoaded(true);
     }).catch((error) => {
@@ -448,7 +453,7 @@ export function TeachItCanvas({ actions }: { actions: React.ReactNode }) {
   useEffect(() => {
     if (!loaded) return;
     const timer = window.setTimeout(() => {
-      void saveDocument({ elements, camera }).then(() => {
+      void saveDocument({ elements, camera, libraries }).then(() => {
         setSaveNotice("Saved on this Mac");
         window.setTimeout(() => setSaveNotice(""), 1800);
       }).catch((error) => {
@@ -457,7 +462,64 @@ export function TeachItCanvas({ actions }: { actions: React.ReactNode }) {
       });
     }, 450);
     return () => window.clearTimeout(timer);
-  }, [elements, camera, loaded]);
+  }, [elements, camera, libraries, loaded]);
+
+  const parseLibraryFiles = useCallback(async (files: FileList | File[]) => {
+    const imported: LibraryItem[] = [];
+    const failures: string[] = [];
+    for (const file of Array.from(files)) {
+      if (!file.name.toLowerCase().endsWith(".excalidrawlib")) continue;
+      try {
+        const data = JSON.parse(await file.text()) as { libraryItems?: Array<{ id?: string; name?: string; elements?: Array<Record<string, unknown>> }> };
+        if (!Array.isArray(data.libraryItems)) throw new Error("Missing libraryItems");
+        for (const item of data.libraryItems) {
+          const converted: CanvasElement[] = [];
+          for (const raw of item.elements ?? []) {
+            const id = randomId();
+            const x = Number(raw.x ?? 0); const y = Number(raw.y ?? 0);
+            const width = Number(raw.width ?? 0); const height = Number(raw.height ?? 0);
+            const stroke = typeof raw.strokeColor === "string" ? raw.strokeColor : COLORS[0];
+            const strokeWidth = Number(raw.strokeWidth ?? 2);
+            const type = raw.type;
+            if (type === "text" && typeof raw.text === "string") {
+              converted.push({ id, type, x, y, text: raw.text, stroke, strokeWidth, fontSize: Number(raw.fontSize ?? 24) });
+            } else if (["rectangle", "ellipse", "line", "arrow"].includes(String(type))) {
+              const fill = typeof raw.backgroundColor === "string" && raw.backgroundColor !== "transparent" ? raw.backgroundColor : "transparent";
+              converted.push({ id, type: type as ShapeKind, x, y, width, height, stroke, strokeWidth, fill });
+            } else if (["freedraw", "draw"].includes(String(type)) && Array.isArray(raw.points)) {
+              const points = (raw.points as unknown[]).flatMap((point) => Array.isArray(point) && point.length >= 2
+                ? [{ x: x + Number(point[0]), y: y + Number(point[1]) }] : []);
+              if (points.length) converted.push({ id, type: "freehand", points, stroke, strokeWidth });
+            }
+          }
+          if (converted.length) imported.push({ id: randomId(), name: item.name || file.name.replace(/\.excalidrawlib$/i, ""), elements: converted });
+        }
+      } catch {
+        failures.push(file.name);
+      }
+    }
+    if (imported.length) {
+      setLibraries((current) => [...current, ...imported]);
+      setSaveNotice(`Added ${imported.length} library item${imported.length === 1 ? "" : "s"}`);
+    }
+    if (failures.length) setSaveNotice(`Couldn't read ${failures.join(", ")}`);
+    setLibraryOpen(true);
+  }, []);
+
+  const saveSelectionToLibrary = () => {
+    const selected = new Set(selectedIds);
+    const chosen = elementsRef.current.filter((element) => selected.has(element.id));
+    if (!chosen.length) return;
+    const name = window.prompt("Name this library item");
+    if (!name?.trim()) return;
+    const box = combinedBounds(chosen);
+    if (!box) return;
+    setLibraries((current) => [...current, {
+      id: randomId(), name: name.trim(),
+      elements: chosen.map((element) => translate(element, -box.x, -box.y)),
+    }]);
+    setLibraryOpen(true);
+  };
 
   const setCurrentElements = useCallback((next: CanvasElement[]) => {
     elementsRef.current = next;
@@ -471,6 +533,20 @@ export function TeachItCanvas({ actions }: { actions: React.ReactNode }) {
     setCanRedo(false);
     setCurrentElements(next);
   }, [setCurrentElements]);
+
+  const insertLibraryItem = useCallback((item: LibraryItem) => {
+    const rect = svgRef.current?.getBoundingClientRect();
+    if (!rect || item.elements.length === 0) return;
+    const center = { x: (rect.width / 2 - camera.x) / camera.zoom, y: (rect.height / 2 - camera.y) / camera.zoom };
+    const box = combinedBounds(item.elements);
+    if (!box) return;
+    const offsetX = center.x - box.x - box.width / 2;
+    const offsetY = center.y - box.y - box.height / 2;
+    const added = item.elements.map((element) => ({ ...translate(element, offsetX, offsetY), id: randomId() }));
+    commit([...elementsRef.current, ...added]);
+    setSelectedIds(added.map((element) => element.id));
+    setLibraryOpen(false);
+  }, [camera, commit]);
 
   const updateSelectedElements = useCallback((update: (element: CanvasElement) => CanvasElement) => {
     if (selectedIds.length === 0) return;
@@ -755,8 +831,12 @@ export function TeachItCanvas({ actions }: { actions: React.ReactNode }) {
 
   const onWheel = (event: ReactWheelEvent<SVGSVGElement>) => {
     event.preventDefault();
-    if (event.shiftKey) {
-      setCamera((current) => ({ ...current, x: current.x - event.deltaY }));
+    if (!event.metaKey && !event.ctrlKey) {
+      setCamera((current) => ({
+        ...current,
+        x: current.x - event.deltaX - (event.shiftKey ? event.deltaY : 0),
+        y: current.y - (event.shiftKey ? 0 : event.deltaY),
+      }));
       return;
     }
     const rect = event.currentTarget.getBoundingClientRect();
@@ -764,7 +844,7 @@ export function TeachItCanvas({ actions }: { actions: React.ReactNode }) {
     const sy = event.clientY - rect.top;
     const factor = Math.exp(-event.deltaY * 0.0012);
     setCamera((current) => {
-      const zoom = Math.min(4, Math.max(0.2, current.zoom * factor));
+      const zoom = Math.min(16, Math.max(0.05, current.zoom * factor));
       const worldX = (sx - current.x) / current.zoom;
       const worldY = (sy - current.y) / current.zoom;
       return { x: sx - worldX * zoom, y: sy - worldY * zoom, zoom };
@@ -805,7 +885,7 @@ export function TeachItCanvas({ actions }: { actions: React.ReactNode }) {
     const sx = rect ? rect.width / 2 : 0;
     const sy = rect ? rect.height / 2 : 0;
     setCamera((current) => {
-      const zoom = Math.min(4, Math.max(0.2, current.zoom * factor));
+      const zoom = Math.min(16, Math.max(0.05, current.zoom * factor));
       const worldX = (sx - current.x) / current.zoom;
       const worldY = (sy - current.y) / current.zoom;
       return { x: sx - worldX * zoom, y: sy - worldY * zoom, zoom };
@@ -833,7 +913,57 @@ export function TeachItCanvas({ actions }: { actions: React.ReactNode }) {
         </div>
         <div className="native-actions">{actions}</div>
       </header>
-      <div className={`native-canvas-shell ${cursorClass}`}>
+      <div
+        className={`native-canvas-shell ${cursorClass}`}
+        style={{
+          backgroundSize: `${24 * camera.zoom}px ${24 * camera.zoom}px`,
+          backgroundPosition: `${camera.x % (24 * camera.zoom)}px ${camera.y % (24 * camera.zoom)}px`,
+        }}
+        onDragOver={(event) => { event.preventDefault(); }}
+        onDrop={(event) => {
+          event.preventDefault();
+          void parseLibraryFiles(event.dataTransfer.files);
+        }}
+      >
+        <button type="button" className={`native-library-toggle${libraryOpen ? " is-active" : ""}`} onClick={() => setLibraryOpen((open) => !open)} aria-expanded={libraryOpen}>
+          <span aria-hidden="true">▧</span> Library
+        </button>
+        <input
+          ref={libraryInputRef}
+          type="file"
+          accept=".excalidrawlib,application/json"
+          multiple
+          hidden
+          onChange={(event) => { if (event.target.files) void parseLibraryFiles(event.target.files); event.target.value = ""; }}
+        />
+        {libraryOpen && (
+          <aside className="native-library-drawer" aria-label="TeachIt library">
+            <header><div><strong>Library</strong><small>Saved shapes and diagrams</small></div><button type="button" aria-label="Close library" onClick={() => setLibraryOpen(false)}>×</button></header>
+            <div className="native-library-actions">
+              <button type="button" onClick={() => libraryInputRef.current?.click()}>Import .excalidrawlib</button>
+              <button type="button" disabled={selectedIds.length === 0} onClick={saveSelectionToLibrary}>Save selection</button>
+            </div>
+            <div className="native-library-list">
+              {libraries.length === 0 ? <p>Drop downloaded .excalidrawlib files here or import one to get started.</p> : libraries.map((item) => (
+                <div className="native-library-item" key={item.id}>
+                  <button type="button" className="native-library-preview" aria-label={`Add ${item.name} to canvas`} onClick={() => insertLibraryItem(item)}>
+                    <svg
+                      viewBox={(() => {
+                        const box = combinedBounds(item.elements) ?? { x: 0, y: 0, width: 1, height: 1 };
+                        return `${box.x - 6} ${box.y - 6} ${Math.max(12, box.width + 12)} ${Math.max(12, box.height + 12)}`;
+                      })()}
+                      aria-hidden="true"
+                    >
+                      {item.elements.map((element) => <ElementView key={element.id} element={element} />)}
+                    </svg>
+                    <span>{item.name}</span>
+                  </button>
+                  <button type="button" className="native-library-delete" aria-label={`Remove ${item.name} from library`} onClick={() => setLibraries((current) => current.filter((candidate) => candidate.id !== item.id))}>×</button>
+                </div>
+              ))}
+            </div>
+          </aside>
+        )}
         <div className="native-palette">
           <div className="native-property-group" role="group" aria-label="Stroke color">
             <span>Stroke</span>
