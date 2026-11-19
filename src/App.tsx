@@ -17,6 +17,7 @@ import type {
 import type { OrderedExcalidrawElement } from "@excalidraw/excalidraw/element/types";
 import type { ImportedDataState } from "@excalidraw/excalidraw/data/types";
 import type { LibraryPersistenceAdapter } from "@excalidraw/excalidraw/data/library";
+import { TeachItCanvas } from "./TeachItCanvas";
 
 const DATABASE = "excalidraw-whiteboard";
 const STORE = "scene";
@@ -298,6 +299,7 @@ function ImportLibraryButton({ api }: ImportLibraryButtonProps) {
 }
 
 export default function App() {
+  const [canvasMode, setCanvasMode] = useState<"excalidraw" | "teachit">("excalidraw");
   const [initialData, setInitialData] = useState<unknown>(null);
   const [loaded, setLoaded] = useState(false);
   const [cameraStream, setCameraStream] = useState<MediaStream | null>(null);
@@ -556,9 +558,48 @@ export default function App() {
     }
   };
 
+  const mediaActions = (
+    <>
+      <button
+        className="teachit-action-button"
+        type="button"
+        onClick={() => void toggleCamera()}
+        title={cameraStream ? "Turn camera off" : "Turn camera on"}
+      >
+        {cameraStream ? "Camera Off" : "Camera On"}
+      </button>
+      {recordingState === "recording" || recordingState === "stopping" ? (
+        <button className="teachit-action-button teachit-action-button--recording" type="button" onClick={stopRecording}>
+          {recordingState === "stopping" ? "Saving…" : "Stop recording"}
+        </button>
+      ) : (
+        <button
+          className="teachit-action-button"
+          type="button"
+          disabled={recordingState === "starting"}
+          onClick={() => void startRecording()}
+          title="Record the TeachIt window and microphone to an MP4 file"
+        >
+          {recordingState === "starting" ? "Starting…" : "Record"}
+        </button>
+      )}
+    </>
+  );
+
   return (
     <main className="whiteboard">
-      {loaded ? (
+      {canvasMode === "teachit" ? (
+        <TeachItCanvas
+          actions={(
+            <div className="teachit-toolbar-actions">
+              <button className="teachit-action-button" type="button" onClick={() => setCanvasMode("excalidraw")}>
+                Back to Excalidraw preview
+              </button>
+              {mediaActions}
+            </div>
+          )}
+        />
+      ) : loaded ? (
         <Excalidraw
           initialData={initialData as never}
           excalidrawAPI={(api) => {
@@ -568,30 +609,11 @@ export default function App() {
           libraryReturnUrl={`${window.location.origin}${window.location.pathname}`}
           renderTopRightUI={() => (
             <div className="teachit-toolbar-actions">
-              <ImportLibraryButton api={api} />
-              <button
-                className="teachit-action-button"
-                type="button"
-                onClick={() => void toggleCamera()}
-                title={cameraStream ? "Turn camera off" : "Turn camera on"}
-              >
-                {cameraStream ? "Camera Off" : "Camera On"}
+              <button className="teachit-action-button" type="button" onClick={() => setCanvasMode("teachit")}>
+                Try TeachIt Canvas
               </button>
-              {recordingState === "recording" || recordingState === "stopping" ? (
-                <button className="teachit-action-button teachit-action-button--recording" type="button" onClick={stopRecording}>
-                  {recordingState === "stopping" ? "Saving…" : "Stop recording"}
-                </button>
-              ) : (
-                <button
-                  className="teachit-action-button"
-                  type="button"
-                  disabled={recordingState === "starting"}
-                  onClick={() => void startRecording()}
-                  title="Record the TeachIt window and microphone to an MP4 file"
-                >
-                  {recordingState === "starting" ? "Starting…" : "Record"}
-                </button>
-              )}
+              <ImportLibraryButton api={api} />
+              {mediaActions}
             </div>
           )}
           onChange={(elements, appState, files) => {
