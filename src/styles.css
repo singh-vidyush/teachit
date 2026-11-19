@@ -330,19 +330,117 @@ body {
 .native-canvas-shell.cursor-text .native-canvas { cursor: text; }
 .native-canvas-shell.cursor-pan .native-canvas { cursor: grab; }
 .native-canvas-shell.cursor-pan:active .native-canvas { cursor: grabbing; }
+.native-canvas-shell.cursor-erase .native-canvas { cursor: cell; }
+
+.native-library-toggle {
+  position: absolute;
+  z-index: 3;
+  top: 18px;
+  right: 18px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid #e9e5dc;
+  border-radius: 10px;
+  padding: 9px 13px;
+  background: rgb(255 255 255 / 96%);
+  color: #393640;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.2;
+  box-shadow: 0 3px 12px rgb(50 40 20 / 6%);
+  cursor: pointer;
+}
+
+.native-library-toggle:hover,
+.native-library-toggle.is-active { background: #f1efff; color: #614ac6; }
+.native-library-toggle span { font-size: 17px; }
+
+.native-library-drawer {
+  position: absolute;
+  z-index: 4;
+  top: 66px;
+  right: 18px;
+  display: flex;
+  width: 310px;
+  max-height: min(70vh, 620px);
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid #e8e4dd;
+  border-radius: 13px;
+  background: rgb(255 255 255 / 98%);
+  box-shadow: 0 12px 36px rgb(40 33 25 / 14%);
+}
+
+.native-library-drawer > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 15px 16px 12px;
+  border-bottom: 1px solid #f0ede8;
+}
+
+.native-library-drawer > header div { display: grid; gap: 4px; }
+.native-library-drawer > header strong { color: #28252d; font-size: 14px; }
+.native-library-drawer > header small { color: #938e98; font-size: 11px; }
+.native-library-drawer > header button,
+.native-library-delete {
+  border: 0;
+  background: transparent;
+  color: #79737e;
+  font-size: 20px;
+  cursor: pointer;
+}
+
+.native-library-actions { display: flex; gap: 8px; padding: 12px; }
+.native-library-actions button {
+  flex: 1;
+  border: 1px solid #e7e3dc;
+  border-radius: 8px;
+  padding: 8px 7px;
+  background: #fff;
+  color: #45414a;
+  font-size: 11px;
+  cursor: pointer;
+}
+.native-library-actions button:hover:not(:disabled) { background: #f6f4ff; border-color: #d6cff7; }
+.native-library-actions button:disabled { color: #bcb8c1; cursor: default; }
+.native-library-list { display: grid; gap: 8px; overflow: auto; padding: 0 12px 12px; }
+.native-library-list > p { margin: 4px 2px; color: #8d8791; font-size: 12px; line-height: 1.5; }
+.native-library-item { display: flex; align-items: center; border: 1px solid #eeeae4; border-radius: 9px; }
+.native-library-preview { display: grid; flex: 1; min-width: 0; gap: 5px; border: 0; padding: 8px; background: transparent; text-align: left; cursor: pointer; }
+.native-library-preview svg { width: 100%; height: 66px; overflow: hidden; }
+.native-library-preview span { overflow: hidden; color: #49454e; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.native-library-delete { width: 32px; align-self: stretch; }
+.native-library-delete:hover { color: #bd4848; }
 
 .native-palette {
   position: absolute;
   z-index: 1;
   top: 18px;
   left: 18px;
-  display: flex;
-  gap: 7px;
-  padding: 8px;
+  display: grid;
+  gap: 10px;
+  min-width: 150px;
+  padding: 11px;
   border: 1px solid #eeebe5;
   border-radius: 11px;
   background: rgb(255 255 255 / 93%);
   box-shadow: 0 3px 12px rgb(50 40 20 / 6%);
+}
+
+.native-property-group {
+  display: grid;
+  gap: 7px;
+  color: #77716b;
+  font-size: 11px;
+}
+
+.native-property-options {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .native-color {
@@ -357,6 +455,40 @@ body {
 
 .native-color.is-active {
   box-shadow: 0 0 0 2px #8070d3;
+}
+
+.native-width,
+.native-fill {
+  display: grid;
+  width: 22px;
+  height: 22px;
+  place-items: center;
+  padding: 0;
+  border: 1px solid #e6e2dc;
+  border-radius: 6px;
+  background: #fff;
+  cursor: pointer;
+}
+
+.native-width span {
+  width: 12px;
+  border-radius: 4px;
+  background: #393641;
+}
+
+.native-width.is-active,
+.native-fill.is-active {
+  outline: 2px solid #8170d2;
+  outline-offset: 1px;
+}
+
+.native-fill {
+  border-radius: 50%;
+  box-shadow: 0 0 0 1px rgb(20 20 20 / 8%);
+}
+
+.native-fill.is-transparent {
+  background-image: linear-gradient(135deg, transparent 46%, #dd6c6c 47% 53%, transparent 54%);
 }
 
 .native-empty-hint,
