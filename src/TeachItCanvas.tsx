@@ -2,20 +2,44 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { CSSProperties, PointerEvent as ReactPointerEvent, ReactNode, WheelEvent as ReactWheelEvent } from "react";
 
 type Point = { x: number; y: number };
-type Tool = "select" | "draw" | "rectangle" | "ellipse" | "line" | "arrow" | "text" | "pan";
+type Tool = "select" | "draw" | "rectangle" | "ellipse" | "line" | "arrow" | "text" | "erase" | "pan";
 type ShapeKind = "rectangle" | "ellipse" | "line" | "arrow";
-type ElementBase = { id: string; stroke: string; strokeWidth: number };
+type ElementBase = { id: string; stroke: string; strokeWidth: number; fill?: string };
 type PathElement = ElementBase & { type: "freehand"; points: Point[] };
 type ShapeElement = ElementBase & { type: ShapeKind; x: number; y: number; width: number; height: number };
 type TextElement = ElementBase & { type: "text"; x: number; y: number; text: string; fontSize: number };
 type CanvasElement = PathElement | ShapeElement | TextElement;
 type Camera = { x: number; y: number; zoom: number };
-type TextDraft = { point: Point; screenX: number; screenY: number };
+type TextDraft = { point: Point; screenX: number; screenY: number; editingId?: string };
+type ResizeHandle = "nw" | "n" | "ne" | "e" | "se" | "s" | "sw" | "w";
+type Gesture = {
+  kind: "draw" | "shape" | "move" | "pan" | "resize" | "erase" | "marquee";
+  pointerId: number;
+  start: Point;
+  startScreen: Point;
+  before?: CanvasElement[];
+  ids?: string[];
+  originalBounds?: ReturnType<typeof bounds>;
+  handle?: ResizeHandle;
+  additive?: boolean;
+};
+const RESIZE_HANDLES: { id: ResizeHandle; x: number; y: number; cursor: string }[] = [
+  { id: "nw", x: 0, y: 0, cursor: "nwse-resize" },
+  { id: "n", x: 0.5, y: 0, cursor: "ns-resize" },
+  { id: "ne", x: 1, y: 0, cursor: "nesw-resize" },
+  { id: "e", x: 1, y: 0.5, cursor: "ew-resize" },
+  { id: "se", x: 1, y: 1, cursor: "nwse-resize" },
+  { id: "s", x: 0.5, y: 1, cursor: "ns-resize" },
+  { id: "sw", x: 0, y: 1, cursor: "nesw-resize" },
+  { id: "w", x: 0, y: 0.5, cursor: "ew-resize" },
+];
 
 const DATABASE = "teachit-native-canvas";
 const STORE = "documents";
 const DOCUMENT_KEY = "main";
 const COLORS = ["#252525", "#6f59d9", "#2387a5", "#d65050", "#2b9666"];
+const FILLS = ["transparent", "#fff1b8", "#d8f5e7", "#e7e0ff", "#ffe0e0"];
+const STROKE_WIDTHS = [2, 3.5, 5.5];
 const TOOLS: { id: Tool; label: string; shortcut: string }[] = [
   { id: "select", label: "Select", shortcut: "V" },
   { id: "draw", label: "Draw", shortcut: "P" },
@@ -24,6 +48,7 @@ const TOOLS: { id: Tool; label: string; shortcut: string }[] = [
   { id: "line", label: "Line", shortcut: "L" },
   { id: "arrow", label: "Arrow", shortcut: "A" },
   { id: "text", label: "Text", shortcut: "T" },
+  { id: "erase", label: "Eraser", shortcut: "E" },
   { id: "pan", label: "Hand", shortcut: "H" },
 ];
 
@@ -205,6 +230,16 @@ function bounds(element: CanvasElement) {
   };
 }
 
+function combinedBounds(elements: CanvasElement[]) {
+  if (elements.length === 0) return null;
+  const boxes = elements.map(bounds);
+  const left = Math.min(...boxes.map((box) => box.x));
+  const top = Math.min(...boxes.map((box) => box.y));
+  const right = Math.max(...boxes.map((box) => box.x + box.width));
+  const bottom = Math.max(...boxes.map((box) => box.y + box.height));
+  return { x: left, y: top, width: right - left, height: bottom - top };
+}
+
 function translate(element: CanvasElement, dx: number, dy: number): CanvasElement {
   if (element.type === "freehand") {
     return { ...element, points: element.points.map((point) => ({ x: point.x + dx, y: point.y + dy })) };
@@ -212,15 +247,98 @@ function translate(element: CanvasElement, dx: number, dy: number): CanvasElemen
   return { ...element, x: element.x + dx, y: element.y + dy };
 }
 
-function ElementView({ element, selected }: {
+function resizeElement(element: CanvasElement, original: ReturnType<typeof bounds>, next: ReturnType<typeof bounds>) {
+  const sx = next.width / Math.max(1, original.width);
+  const sy = next.height / Math.max(1, original.height);
+  const mapPoint = (point: Point) => ({
+    x: next.x + (point.x - original.x) * sx,
+    y: next.y + (point.y - original.y) * sy,
+  });
+  if (element.type === "freehand") return { ...element, points: element.points.map(mapPoint) };
+  if (element.type === "text") {
+    return {
+      ...element,
+      ...mapPoint({ x: element.x, y: element.y }),
+      fontSize: Math.max(10, element.fontSize * Math.sqrt(Math.abs(sx * sy))),
+    };
+  }
+  const start = mapPoint({ x: element.x, y: element.y });
+  const end = mapPoint({ x: element.x + element.width, y: element.y + element.height });
+  return { ...element, x: start.x, y: start.y, width: end.x - start.x, height: end.y - start.y };
+}
+
+function boxesOverlap(a: ReturnType<typeof bounds>, b: ReturnType<typeof bounds>, padding = 0) {
+  return a.x - padding <= b.x + b.width && a.x + a.width + padding >= b.x &&
+    a.y - padding <= b.y + b.height && a.y + a.height + padding >= b.y;
+}
+
+function distanceToSegment(point: Point, start: Point, end: Point) {
+  const dx = end.x - start.x;
+  const dy = end.y - start.y;
+  const lengthSquared = dx * dx + dy * dy;
+  if (lengthSquared === 0) return Math.hypot(point.x - start.x, point.y - start.y);
+  const amount = Math.max(0, Math.min(1, ((point.x - start.x) * dx + (point.y - start.y) * dy) / lengthSquared));
+  return Math.hypot(point.x - (start.x + amount * dx), point.y - (start.y + amount * dy));
+}
+
+function hitTest(element: CanvasElement, point: Point, radius: number) {
+  const threshold = radius + element.strokeWidth / 2;
+  if (element.type === "text") {
+    const box = bounds(element);
+    return point.x >= box.x - radius && point.x <= box.x + box.width + radius &&
+      point.y >= box.y - radius && point.y <= box.y + box.height + radius;
+  }
+  if (element.type === "freehand") {
+    return element.points.some((current, index) => index > 0 && distanceToSegment(point, element.points[index - 1], current) <= threshold);
+  }
+  if (element.type === "line" || element.type === "arrow") {
+    const start = { x: element.x, y: element.y };
+    const end = { x: element.x + element.width, y: element.y + element.height };
+    if (distanceToSegment(point, start, end) <= threshold) return true;
+    if (element.type === "arrow") {
+      const angle = Math.atan2(element.height, element.width);
+      const size = Math.min(17, Math.max(8, Math.hypot(element.width, element.height) * 0.22));
+      const left = { x: end.x - size * Math.cos(angle - Math.PI / 6), y: end.y - size * Math.sin(angle - Math.PI / 6) };
+      const right = { x: end.x - size * Math.cos(angle + Math.PI / 6), y: end.y - size * Math.sin(angle + Math.PI / 6) };
+      return distanceToSegment(point, left, end) <= threshold || distanceToSegment(point, end, right) <= threshold;
+    }
+    return false;
+  }
+  const box = bounds(element);
+  if (element.fill && element.fill !== "transparent" &&
+    point.x >= box.x && point.x <= box.x + box.width && point.y >= box.y && point.y <= box.y + box.height) return true;
+  if (element.type === "rectangle") {
+    const corners = [
+      { x: box.x, y: box.y }, { x: box.x + box.width, y: box.y },
+      { x: box.x + box.width, y: box.y + box.height }, { x: box.x, y: box.y + box.height },
+    ];
+    return corners.some((corner, index) => distanceToSegment(point, corner, corners[(index + 1) % corners.length]) <= threshold);
+  }
+  const rx = Math.max(1, box.width / 2);
+  const ry = Math.max(1, box.height / 2);
+  const normalized = Math.sqrt(((point.x - (box.x + rx)) / rx) ** 2 + ((point.y - (box.y + ry)) / ry) ** 2);
+  return Math.abs(normalized - 1) * Math.min(rx, ry) <= threshold;
+}
+
+function resizedBounds(original: ReturnType<typeof bounds>, handle: ResizeHandle, point: Point) {
+  let left = original.x;
+  let right = original.x + original.width;
+  let top = original.y;
+  let bottom = original.y + original.height;
+  if (handle.includes("w")) left = Math.min(point.x, right - 8);
+  if (handle.includes("e")) right = Math.max(point.x, left + 8);
+  if (handle.includes("n")) top = Math.min(point.y, bottom - 8);
+  if (handle.includes("s")) bottom = Math.max(point.y, top + 8);
+  return { x: left, y: top, width: right - left, height: bottom - top };
+}
+
+function ElementView({ element }: {
   element: CanvasElement;
-  selected: boolean;
 }) {
   const hitProps = {
     "data-canvas-id": element.id,
   };
   const hitStyle = { cursor: "move", pointerEvents: "all" as const };
-  const selection = selected ? bounds(element) : null;
   return (
     <g>
       {element.type === "text" ? (
@@ -252,7 +370,7 @@ function ElementView({ element, selected }: {
           <path
             {...hitProps}
             d={elementPath(element)}
-            fill={element.type === "rectangle" || element.type === "ellipse" ? "transparent" : "none"}
+            fill={element.type === "rectangle" || element.type === "ellipse" ? (element.fill ?? "transparent") : "none"}
             stroke={element.stroke}
             strokeWidth={element.strokeWidth}
             strokeLinecap="round"
@@ -260,21 +378,6 @@ function ElementView({ element, selected }: {
             style={hitStyle}
           />
         </>
-      )}
-      {selection && (
-        <rect
-          x={selection.x - 6}
-          y={selection.y - 6}
-          width={selection.width + 12}
-          height={selection.height + 12}
-          rx={3}
-          fill="none"
-          stroke="#715ed5"
-          strokeWidth={1.2}
-          strokeDasharray="4 4"
-          vectorEffect="non-scaling-stroke"
-          pointerEvents="none"
-        />
       )}
     </g>
   );
@@ -308,19 +411,15 @@ export function TeachItCanvas({ actions }: { actions: React.ReactNode }) {
   const elementsRef = useRef<CanvasElement[]>([]);
   const undoRef = useRef<CanvasElement[][]>([]);
   const redoRef = useRef<CanvasElement[][]>([]);
-  const gestureRef = useRef<{
-    kind: "draw" | "shape" | "move" | "pan";
-    pointerId: number;
-    start: Point;
-    startScreen: Point;
-    initial?: CanvasElement;
-    before?: CanvasElement[];
-  } | null>(null);
+  const gestureRef = useRef<Gesture | null>(null);
   const [elements, setElements] = useState<CanvasElement[]>([]);
   const [tool, setTool] = useState<Tool>("select");
   const [stroke, setStroke] = useState(COLORS[0]);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [strokeWidth, setStrokeWidth] = useState(STROKE_WIDTHS[0]);
+  const [fill, setFill] = useState(FILLS[0]);
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [draft, setDraft] = useState<CanvasElement | null>(null);
+  const [marquee, setMarquee] = useState<ReturnType<typeof bounds> | null>(null);
   const [camera, setCamera] = useState<Camera>({ x: 0, y: 0, zoom: 1 });
   const [loaded, setLoaded] = useState(false);
   const [canUndo, setCanUndo] = useState(false);
@@ -373,6 +472,47 @@ export function TeachItCanvas({ actions }: { actions: React.ReactNode }) {
     setCurrentElements(next);
   }, [setCurrentElements]);
 
+  const updateSelectedElements = useCallback((update: (element: CanvasElement) => CanvasElement) => {
+    if (selectedIds.length === 0) return;
+    const selected = new Set(selectedIds);
+    const next = elementsRef.current.map((element) => selected.has(element.id) ? update(element) : element);
+    commit(next);
+  }, [commit, selectedIds]);
+
+  const duplicateSelected = useCallback(() => {
+    if (selectedIds.length === 0) return;
+    const selected = new Set(selectedIds);
+    const copies = elementsRef.current.filter((element) => selected.has(element.id)).map((element) => ({
+      ...translate(element, 18, 18),
+      id: randomId(),
+    }));
+    commit([...elementsRef.current, ...copies]);
+    setSelectedIds(copies.map((element) => element.id));
+  }, [commit, selectedIds]);
+
+  const deleteSelected = useCallback(() => {
+    if (selectedIds.length === 0) return;
+    const selected = new Set(selectedIds);
+    commit(elementsRef.current.filter((element) => !selected.has(element.id)));
+    setSelectedIds([]);
+  }, [commit, selectedIds]);
+
+  const chooseStroke = (color: string) => {
+    setStroke(color);
+    updateSelectedElements((element) => ({ ...element, stroke: color }));
+  };
+
+  const chooseStrokeWidth = (width: number) => {
+    setStrokeWidth(width);
+    updateSelectedElements((element) => ({ ...element, strokeWidth: width }));
+  };
+
+  const chooseFill = (color: string) => {
+    setFill(color);
+    if (!selectedIds.some((id) => elementsRef.current.some((element) => element.id === id && (element.type === "rectangle" || element.type === "ellipse")))) return;
+    updateSelectedElements((element) => element.type === "rectangle" || element.type === "ellipse" ? { ...element, fill: color } : element);
+  };
+
   const undo = useCallback(() => {
     const previous = undoRef.current.pop();
     if (!previous) return;
@@ -380,7 +520,7 @@ export function TeachItCanvas({ actions }: { actions: React.ReactNode }) {
     setCanUndo(undoRef.current.length > 0);
     setCanRedo(true);
     setCurrentElements(previous);
-    setSelectedId(null);
+    setSelectedIds([]);
   }, [setCurrentElements]);
 
   const redo = useCallback(() => {
@@ -390,7 +530,7 @@ export function TeachItCanvas({ actions }: { actions: React.ReactNode }) {
     setCanUndo(true);
     setCanRedo(redoRef.current.length > 0);
     setCurrentElements(next);
-    setSelectedId(null);
+    setSelectedIds([]);
   }, [setCurrentElements]);
 
   const toWorld = useCallback((event: { clientX: number; clientY: number }) => {
@@ -402,24 +542,37 @@ export function TeachItCanvas({ actions }: { actions: React.ReactNode }) {
     };
   }, [camera]);
 
-  const startText = (event: ReactPointerEvent<SVGSVGElement>, point: Point) => {
+  const startText = (event: ReactPointerEvent<SVGSVGElement>, point: Point, editing?: TextElement) => {
     const rect = svgRef.current?.getBoundingClientRect();
     if (!rect) return;
-    setTextValue("");
-    setTextDraft({ point, screenX: event.clientX - rect.left, screenY: event.clientY - rect.top });
+    setTextValue(editing?.text ?? "");
+    setTextDraft({ point, screenX: event.clientX - rect.left, screenY: event.clientY - rect.top, editingId: editing?.id });
   };
 
   const commitText = () => {
     if (!textDraft || !textValue.trim()) {
+      if (textDraft?.editingId) {
+        commit(elementsRef.current.filter((element) => element.id !== textDraft.editingId));
+        setSelectedIds([]);
+      }
+      setTextDraft(null);
+      return;
+    }
+    if (textDraft.editingId) {
+      const next = elementsRef.current.map((element) => element.id === textDraft.editingId && element.type === "text"
+        ? { ...element, text: textValue.trim() }
+        : element);
+      commit(next);
+      setSelectedIds([textDraft.editingId]);
       setTextDraft(null);
       return;
     }
     const next: TextElement = {
       id: randomId(), type: "text", x: textDraft.point.x, y: textDraft.point.y,
-      text: textValue.trim(), stroke, strokeWidth: 2, fontSize: 24,
+      text: textValue.trim(), stroke, strokeWidth, fontSize: 24,
     };
     commit([...elementsRef.current, next]);
-    setSelectedId(next.id);
+    setSelectedIds([next.id]);
     setTextDraft(null);
   };
 
@@ -429,6 +582,7 @@ export function TeachItCanvas({ actions }: { actions: React.ReactNode }) {
     const screen = { x: event.clientX, y: event.clientY };
     const target = event.target as Element;
     const hitId = target.closest("[data-canvas-id]")?.getAttribute("data-canvas-id") ?? null;
+    const resizeHandle = target.closest("[data-resize-handle]")?.getAttribute("data-resize-handle") as ResizeHandle | null;
     const moving = event.button === 1 || tool === "pan" || spaceDown;
     event.currentTarget.setPointerCapture(event.pointerId);
 
@@ -437,17 +591,43 @@ export function TeachItCanvas({ actions }: { actions: React.ReactNode }) {
       return;
     }
     if (tool === "select") {
+      if (resizeHandle && selectedIds.length > 0) {
+        const chosen = elementsRef.current.filter((element) => selectedIds.includes(element.id));
+        const originalBounds = combinedBounds(chosen);
+        if (originalBounds) {
+          gestureRef.current = {
+            kind: "resize", pointerId: event.pointerId, start: world, startScreen: screen,
+            before: elementsRef.current, ids: selectedIds, originalBounds, handle: resizeHandle,
+          };
+        }
+        return;
+      }
       if (hitId) {
-        setSelectedId(hitId);
         const initial = elementsRef.current.find((element) => element.id === hitId);
+        if (event.detail >= 2 && initial?.type === "text") {
+          setSelectedIds([hitId]);
+          startText(event, { x: initial.x, y: initial.y }, initial);
+          return;
+        }
+        if (event.shiftKey && selectedIds.includes(hitId)) {
+          setSelectedIds(selectedIds.filter((id) => id !== hitId));
+          return;
+        }
+        const ids = event.shiftKey ? [...new Set([...selectedIds, hitId])] : selectedIds.includes(hitId) ? selectedIds : [hitId];
+        setSelectedIds(ids);
         if (initial) {
           gestureRef.current = {
             kind: "move", pointerId: event.pointerId, start: world, startScreen: screen,
-            initial, before: elementsRef.current,
+            ids, before: elementsRef.current,
           };
         }
       } else {
-        setSelectedId(null);
+        if (!event.shiftKey) setSelectedIds([]);
+        gestureRef.current = {
+          kind: "marquee", pointerId: event.pointerId, start: world, startScreen: screen,
+          ids: selectedIds, additive: event.shiftKey,
+        };
+        setMarquee({ x: world.x, y: world.y, width: 0, height: 0 });
       }
       return;
     }
@@ -455,9 +635,21 @@ export function TeachItCanvas({ actions }: { actions: React.ReactNode }) {
       startText(event, world);
       return;
     }
+    if (tool === "erase") {
+      const gesture: Gesture = { kind: "erase", pointerId: event.pointerId, start: world, startScreen: screen, before: elementsRef.current, ids: [] };
+      gestureRef.current = gesture;
+      const radius = 16 / camera.zoom;
+      const erased = (gesture.before ?? []).filter((element) => hitTest(element, world, radius));
+      gesture.ids = erased.map((element) => element.id);
+      if (gesture.ids.length > 0) {
+        setCurrentElements((gesture.before ?? []).filter((element) => !gesture.ids?.includes(element.id)));
+        setSelectedIds(selectedIds.filter((id) => !gesture.ids?.includes(id)));
+      }
+      return;
+    }
     const id = randomId();
     if (tool === "draw") {
-      const next: PathElement = { id, type: "freehand", points: [world], stroke, strokeWidth: 2.4 };
+      const next: PathElement = { id, type: "freehand", points: [world], stroke, strokeWidth };
       gestureRef.current = { kind: "draw", pointerId: event.pointerId, start: world, startScreen: screen };
       setDraft(next);
       return;
@@ -465,7 +657,7 @@ export function TeachItCanvas({ actions }: { actions: React.ReactNode }) {
     if (["rectangle", "ellipse", "line", "arrow"].includes(tool)) {
       const next: ShapeElement = {
         id, type: tool as ShapeKind, x: world.x, y: world.y, width: 0, height: 0,
-        stroke, strokeWidth: 2.2,
+        stroke, strokeWidth, fill,
       };
       gestureRef.current = { kind: "shape", pointerId: event.pointerId, start: world, startScreen: screen };
       setDraft(next);
@@ -485,11 +677,35 @@ export function TeachItCanvas({ actions }: { actions: React.ReactNode }) {
       return;
     }
     const world = toWorld(event);
-    if (gesture.kind === "move" && gesture.initial) {
+    if (gesture.kind === "move" && gesture.before && gesture.ids) {
       const dx = world.x - gesture.start.x;
       const dy = world.y - gesture.start.y;
-      const next = elementsRef.current.map((element) => element.id === gesture.initial?.id ? translate(gesture.initial, dx, dy) : element);
+      const ids = new Set(gesture.ids);
+      const next = gesture.before.map((element) => ids.has(element.id) ? translate(element, dx, dy) : element);
       setCurrentElements(next);
+      return;
+    }
+    if (gesture.kind === "resize" && gesture.before && gesture.ids && gesture.originalBounds && gesture.handle) {
+      const nextBounds = resizedBounds(gesture.originalBounds, gesture.handle, world);
+      const ids = new Set(gesture.ids);
+      setCurrentElements(gesture.before.map((element) => ids.has(element.id)
+        ? resizeElement(element, gesture.originalBounds!, nextBounds)
+        : element));
+      return;
+    }
+    if (gesture.kind === "erase" && gesture.before && gesture.ids) {
+      const radius = 16 / camera.zoom;
+      const touched = gesture.before.filter((element) => hitTest(element, world, radius)).map((element) => element.id);
+      gesture.ids = [...new Set([...gesture.ids, ...touched])];
+      const erased = new Set(gesture.ids);
+      setCurrentElements(gesture.before.filter((element) => !erased.has(element.id)));
+      setSelectedIds((current) => current.filter((id) => !erased.has(id)));
+      return;
+    }
+    if (gesture.kind === "marquee") {
+      const left = Math.min(gesture.start.x, world.x);
+      const top = Math.min(gesture.start.y, world.y);
+      setMarquee({ x: left, y: top, width: Math.abs(world.x - gesture.start.x), height: Math.abs(world.y - gesture.start.y) });
       return;
     }
     setDraft((current) => {
@@ -507,20 +723,30 @@ export function TeachItCanvas({ actions }: { actions: React.ReactNode }) {
   const onCanvasPointerUp = (event: ReactPointerEvent<SVGSVGElement>) => {
     const gesture = gestureRef.current;
     if (!gesture || gesture.pointerId !== event.pointerId) return;
-    if (gesture.kind === "move") {
+    if (gesture.kind === "move" || gesture.kind === "resize" || gesture.kind === "erase") {
       const moved = Math.hypot(event.clientX - gesture.startScreen.x, event.clientY - gesture.startScreen.y) > 2;
-      if (moved && gesture.before) {
+      const changed = gesture.kind === "erase" ? (gesture.ids?.length ?? 0) > 0 : moved;
+      if (changed && gesture.before) {
         undoRef.current = [...undoRef.current, gesture.before].slice(-100);
         redoRef.current = [];
         setCanUndo(true);
         setCanRedo(false);
       }
+    } else if (gesture.kind === "marquee") {
+      const end = toWorld(event);
+      const selectionBox = {
+        x: Math.min(gesture.start.x, end.x), y: Math.min(gesture.start.y, end.y),
+        width: Math.abs(end.x - gesture.start.x), height: Math.abs(end.y - gesture.start.y),
+      };
+      const found = elementsRef.current.filter((element) => boxesOverlap(bounds(element), selectionBox)).map((element) => element.id);
+      setSelectedIds(gesture.additive ? [...new Set([...(gesture.ids ?? []), ...found])] : found);
+      setMarquee(null);
     } else if (gesture.kind === "draw" || gesture.kind === "shape") {
       const completed = draft;
       const moved = Math.hypot(event.clientX - gesture.startScreen.x, event.clientY - gesture.startScreen.y) > 2;
       if (completed && moved) {
         commit([...elementsRef.current, completed]);
-        setSelectedId(completed.id);
+        setSelectedIds([completed.id]);
       }
       setDraft(null);
     }
@@ -556,13 +782,12 @@ export function TeachItCanvas({ actions }: { actions: React.ReactNode }) {
         return;
       }
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "y") { event.preventDefault(); redo(); return; }
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "d") { event.preventDefault(); duplicateSelected(); return; }
       if (event.key === "Backspace" || event.key === "Delete") {
-        if (!selectedId) return;
-        commit(elementsRef.current.filter((element) => element.id !== selectedId));
-        setSelectedId(null);
+        deleteSelected();
         return;
       }
-      if (event.key === "Escape") { setSelectedId(null); setDraft(null); setTextDraft(null); return; }
+      if (event.key === "Escape") { setSelectedIds([]); setDraft(null); setTextDraft(null); setMarquee(null); return; }
       const shortcut = TOOLS.find((item) => item.shortcut.toLowerCase() === event.key.toLowerCase());
       if (shortcut) setTool(shortcut.id);
     };
@@ -573,7 +798,7 @@ export function TeachItCanvas({ actions }: { actions: React.ReactNode }) {
       window.removeEventListener("keydown", onKeyDown);
       window.removeEventListener("keyup", onKeyUp);
     };
-  }, [commit, redo, selectedId, undo]);
+  }, [deleteSelected, duplicateSelected, redo, undo]);
 
   const zoomBy = (factor: number) => {
     const rect = svgRef.current?.getBoundingClientRect();
@@ -589,7 +814,8 @@ export function TeachItCanvas({ actions }: { actions: React.ReactNode }) {
 
   const drawnElements = draft ? [...elements, draft] : elements;
   const textStyle: CSSProperties = textDraft ? { left: textDraft.screenX + 4, top: textDraft.screenY + 4 } : {};
-  const cursorClass = tool === "draw" ? "cursor-draw" : tool === "text" ? "cursor-text" : tool === "pan" || spaceDown ? "cursor-pan" : "";
+  const selectionBox = combinedBounds(elements.filter((element) => selectedIds.includes(element.id)));
+  const cursorClass = tool === "draw" ? "cursor-draw" : tool === "text" ? "cursor-text" : tool === "erase" ? "cursor-erase" : tool === "pan" || spaceDown ? "cursor-pan" : "";
 
   return (
     <main className="native-whiteboard">
@@ -608,18 +834,54 @@ export function TeachItCanvas({ actions }: { actions: React.ReactNode }) {
         <div className="native-actions">{actions}</div>
       </header>
       <div className={`native-canvas-shell ${cursorClass}`}>
-        <div className="native-palette" role="group" aria-label="Stroke color">
-          {COLORS.map((color) => (
-            <button
-              key={color}
-              type="button"
-              className={`native-color${stroke === color ? " is-active" : ""}`}
-              style={{ backgroundColor: color }}
-              aria-label={`Use ${color} stroke`}
-              aria-pressed={stroke === color}
-              onClick={() => setStroke(color)}
-            />
-          ))}
+        <div className="native-palette">
+          <div className="native-property-group" role="group" aria-label="Stroke color">
+            <span>Stroke</span>
+            <div className="native-property-options">
+              {COLORS.map((color) => (
+                <button
+                  key={color}
+                  type="button"
+                  className={`native-color${stroke === color ? " is-active" : ""}`}
+                  style={{ backgroundColor: color }}
+                  aria-label={`Use ${color} stroke`}
+                  aria-pressed={stroke === color}
+                  onClick={() => chooseStroke(color)}
+                />
+              ))}
+            </div>
+          </div>
+          <div className="native-property-group" role="group" aria-label="Stroke width">
+            <span>Width</span>
+            <div className="native-property-options">
+              {STROKE_WIDTHS.map((width) => (
+                <button
+                  key={width}
+                  type="button"
+                  className={`native-width${strokeWidth === width ? " is-active" : ""}`}
+                  aria-label={`Stroke width ${width}`}
+                  aria-pressed={strokeWidth === width}
+                  onClick={() => chooseStrokeWidth(width)}
+                ><span style={{ height: Math.max(2, width) }} /></button>
+              ))}
+            </div>
+          </div>
+          <div className="native-property-group" role="group" aria-label="Shape fill">
+            <span>Fill</span>
+            <div className="native-property-options">
+              {FILLS.map((color) => (
+                <button
+                  key={color}
+                  type="button"
+                  className={`native-fill${fill === color ? " is-active" : ""}${color === "transparent" ? " is-transparent" : ""}`}
+                  style={{ backgroundColor: color === "transparent" ? "#fff" : color }}
+                  aria-label={color === "transparent" ? "No fill" : `Use ${color} fill`}
+                  aria-pressed={fill === color}
+                  onClick={() => chooseFill(color)}
+                />
+              ))}
+            </div>
+          </div>
         </div>
         <svg
           ref={svgRef}
@@ -636,9 +898,51 @@ export function TeachItCanvas({ actions }: { actions: React.ReactNode }) {
               <ElementView
                 key={element.id}
                 element={element}
-                selected={selectedId === element.id && element !== draft}
               />
             ))}
+            {selectionBox && (
+              <g className="native-selection-box">
+                <rect
+                  x={selectionBox.x - 5}
+                  y={selectionBox.y - 5}
+                  width={selectionBox.width + 10}
+                  height={selectionBox.height + 10}
+                  rx={3}
+                  fill="none"
+                  stroke="#715ed5"
+                  strokeWidth={1.2}
+                  strokeDasharray="4 4"
+                  vectorEffect="non-scaling-stroke"
+                  pointerEvents="none"
+                />
+                {RESIZE_HANDLES.map((handle) => (
+                  <circle
+                    key={handle.id}
+                    data-resize-handle={handle.id}
+                    cx={selectionBox.x + selectionBox.width * handle.x}
+                    cy={selectionBox.y + selectionBox.height * handle.y}
+                    r={5 / camera.zoom}
+                    fill="#fff"
+                    stroke="#715ed5"
+                    strokeWidth={1.4 / camera.zoom}
+                    style={{ cursor: handle.cursor, pointerEvents: "all" }}
+                  />
+                ))}
+              </g>
+            )}
+            {marquee && (
+              <rect
+                x={marquee.x}
+                y={marquee.y}
+                width={marquee.width}
+                height={marquee.height}
+                fill="rgb(111 89 217 / 10%)"
+                stroke="#715ed5"
+                strokeWidth={1 / camera.zoom}
+                strokeDasharray={`${4 / camera.zoom} ${4 / camera.zoom}`}
+                pointerEvents="none"
+              />
+            )}
           </g>
           <rect className="native-canvas-hit-area" x="0" y="0" width="100%" height="100%" fill="transparent" pointerEvents="none" />
         </svg>
@@ -681,6 +985,7 @@ function ToolGlyph({ tool }: { tool: Tool }) {
     case "line": return <svg viewBox="0 0 24 24"><path d="M5 18 19 6" /></svg>;
     case "arrow": return <svg viewBox="0 0 24 24"><path d="M4 18 19 6m-7 0h7v7" /></svg>;
     case "text": return <svg viewBox="0 0 24 24"><path d="M4 6h16M12 6v13m-4 0h8" /></svg>;
+    case "erase": return <svg viewBox="0 0 24 24"><path d="m6 15 8-9a2 2 0 0 1 3 0l3 3a2 2 0 0 1 0 3l-8 9H8l-4-4a2 2 0 0 1 0-3l2-2Z" /><path d="m8 11 8 8" /></svg>;
     case "pan": return <svg viewBox="0 0 24 24"><path d="M8 11V5a1.5 1.5 0 0 1 3 0v5-7a1.5 1.5 0 0 1 3 0v7-5a1.5 1.5 0 0 1 3 0v7-3a1.5 1.5 0 0 1 3 0v6c0 4-2 7-6 7h-2c-2 0-3-1-4-2l-4-4a1.5 1.5 0 0 1 2-2l3 2" /></svg>;
   }
 }
