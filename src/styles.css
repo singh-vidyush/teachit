@@ -177,3 +177,263 @@ body {
 @keyframes spin {
   to { transform: rotate(360deg); }
 }
+
+.native-whiteboard {
+  position: absolute;
+  z-index: 20;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: #fffdf8;
+  color: #292723;
+  font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+.native-header {
+  z-index: 2;
+  display: flex;
+  min-height: 68px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 0 20px;
+  border-bottom: 1px solid #ece9e1;
+  background: rgb(255 255 255 / 95%);
+}
+
+.native-brand {
+  display: flex;
+  min-width: 162px;
+  align-items: center;
+  gap: 10px;
+  color: #27252b;
+  font-size: 14px;
+  font-weight: 650;
+  white-space: nowrap;
+}
+
+.native-brand small {
+  margin-left: 5px;
+  color: #8d879a;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  vertical-align: 1px;
+}
+
+.native-brand-mark {
+  display: grid;
+  width: 30px;
+  height: 30px;
+  place-items: center;
+  border-radius: 10px;
+  background: #eeeaff;
+  color: #705bd1;
+  font-family: "Chalkboard SE", "Comic Sans MS", cursive;
+  font-size: 20px;
+  font-weight: 700;
+}
+
+.native-toolbar,
+.native-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.native-toolbar {
+  padding: 5px;
+  border: 1px solid #eeeae2;
+  border-radius: 12px;
+  background: #fff;
+  box-shadow: 0 2px 8px rgb(42 34 22 / 4%);
+}
+
+.native-tool {
+  display: grid;
+  width: 34px;
+  height: 34px;
+  place-items: center;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: #45414a;
+  font: 22px/1 "Chalkboard SE", "Comic Sans MS", cursive;
+  cursor: pointer;
+}
+
+.native-tool:hover:not(:disabled) {
+  background: #f5f3f8;
+}
+
+.native-tool.is-active {
+  background: #eeeaff;
+  color: #614ac6;
+}
+
+.native-tool:disabled {
+  color: #c5c1c8;
+  cursor: default;
+}
+
+.native-tool svg {
+  width: 20px;
+  height: 20px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.native-tool:first-child svg {
+  fill: currentColor;
+}
+
+.native-divider {
+  width: 1px;
+  height: 22px;
+  margin: 0 3px;
+  background: #e8e5e0;
+}
+
+.native-actions {
+  justify-content: flex-end;
+  min-width: 260px;
+}
+
+.native-actions .teachit-toolbar-actions {
+  gap: 6px;
+}
+
+.native-canvas-shell {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  background-color: #fffdf8;
+  background-image: radial-gradient(#e9e5dd 0.7px, transparent 0.7px);
+  background-size: 24px 24px;
+}
+
+.native-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  touch-action: none;
+  user-select: none;
+}
+
+.native-canvas-shell.cursor-draw .native-canvas { cursor: crosshair; }
+.native-canvas-shell.cursor-text .native-canvas { cursor: text; }
+.native-canvas-shell.cursor-pan .native-canvas { cursor: grab; }
+.native-canvas-shell.cursor-pan:active .native-canvas { cursor: grabbing; }
+
+.native-palette {
+  position: absolute;
+  z-index: 1;
+  top: 18px;
+  left: 18px;
+  display: flex;
+  gap: 7px;
+  padding: 8px;
+  border: 1px solid #eeebe5;
+  border-radius: 11px;
+  background: rgb(255 255 255 / 93%);
+  box-shadow: 0 3px 12px rgb(50 40 20 / 6%);
+}
+
+.native-color {
+  width: 19px;
+  height: 19px;
+  padding: 0;
+  border: 2px solid #fff;
+  border-radius: 50%;
+  box-shadow: 0 0 0 1px rgb(20 20 20 / 14%);
+  cursor: pointer;
+}
+
+.native-color.is-active {
+  box-shadow: 0 0 0 2px #8070d3;
+}
+
+.native-empty-hint,
+.native-loading {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  color: #b6b1a9;
+  font-size: 15px;
+  pointer-events: none;
+  transform: translate(-50%, -50%);
+}
+
+.native-loading { color: #857e91; }
+
+.native-text-editor {
+  position: absolute;
+  z-index: 2;
+  min-width: 190px;
+  min-height: 44px;
+  resize: both;
+  border: 1px solid #9281e4;
+  border-radius: 5px;
+  outline: 2px solid rgb(146 129 228 / 16%);
+  padding: 6px 8px;
+  background: #fffefa;
+  color: #252525;
+  font: 24px/1.2 "Chalkboard SE", "Comic Sans MS", cursive;
+}
+
+.native-zoom-controls {
+  position: absolute;
+  bottom: 18px;
+  left: 18px;
+  display: flex;
+  height: 38px;
+  align-items: center;
+  overflow: hidden;
+  border: 1px solid #e9e5dc;
+  border-radius: 10px;
+  background: rgb(255 255 255 / 96%);
+  box-shadow: 0 3px 12px rgb(50 40 20 / 5%);
+}
+
+.native-zoom-controls button {
+  width: 38px;
+  height: 36px;
+  border: 0;
+  background: transparent;
+  color: #49454e;
+  font-size: 20px;
+  cursor: pointer;
+}
+
+.native-zoom-controls button:hover { background: #f5f3f8; }
+.native-zoom-controls span { min-width: 52px; text-align: center; font-size: 12px; }
+.native-zoom-controls .native-reset-zoom { width: auto; padding: 0 10px; border-left: 1px solid #eeeae2; font-size: 11px; }
+
+.native-save-status {
+  position: absolute;
+  right: 18px;
+  bottom: 25px;
+  color: #928d83;
+  font-size: 11px;
+  pointer-events: none;
+}
+
+@media (max-width: 1020px) {
+  .native-header { gap: 8px; padding: 0 10px; }
+  .native-brand { min-width: 125px; }
+  .native-tool { width: 29px; }
+  .native-actions { min-width: 220px; }
+}
+
+@media (max-width: 760px) {
+  .native-header { flex-wrap: wrap; padding: 8px; }
+  .native-brand { min-width: unset; }
+  .native-toolbar { order: 3; width: 100%; justify-content: center; }
+  .native-actions { min-width: unset; }
+}
