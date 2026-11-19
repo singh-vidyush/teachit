@@ -330,19 +330,34 @@ body {
 .native-canvas-shell.cursor-text .native-canvas { cursor: text; }
 .native-canvas-shell.cursor-pan .native-canvas { cursor: grab; }
 .native-canvas-shell.cursor-pan:active .native-canvas { cursor: grabbing; }
+.native-canvas-shell.cursor-erase .native-canvas { cursor: cell; }
 
 .native-palette {
   position: absolute;
   z-index: 1;
   top: 18px;
   left: 18px;
-  display: flex;
-  gap: 7px;
-  padding: 8px;
+  display: grid;
+  gap: 10px;
+  min-width: 150px;
+  padding: 11px;
   border: 1px solid #eeebe5;
   border-radius: 11px;
   background: rgb(255 255 255 / 93%);
   box-shadow: 0 3px 12px rgb(50 40 20 / 6%);
+}
+
+.native-property-group {
+  display: grid;
+  gap: 7px;
+  color: #77716b;
+  font-size: 11px;
+}
+
+.native-property-options {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .native-color {
@@ -357,6 +372,40 @@ body {
 
 .native-color.is-active {
   box-shadow: 0 0 0 2px #8070d3;
+}
+
+.native-width,
+.native-fill {
+  display: grid;
+  width: 22px;
+  height: 22px;
+  place-items: center;
+  padding: 0;
+  border: 1px solid #e6e2dc;
+  border-radius: 6px;
+  background: #fff;
+  cursor: pointer;
+}
+
+.native-width span {
+  width: 12px;
+  border-radius: 4px;
+  background: #393641;
+}
+
+.native-width.is-active,
+.native-fill.is-active {
+  outline: 2px solid #8170d2;
+  outline-offset: 1px;
+}
+
+.native-fill {
+  border-radius: 50%;
+  box-shadow: 0 0 0 1px rgb(20 20 20 / 8%);
+}
+
+.native-fill.is-transparent {
+  background-image: linear-gradient(135deg, transparent 46%, #dd6c6c 47% 53%, transparent 54%);
 }
 
 .native-empty-hint,
